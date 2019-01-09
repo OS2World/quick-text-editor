@@ -28,16 +28,17 @@
 #include "gotolinedialog.h"
 #include "mainwindow.h"
 #include "qetextedit.h"
+#include "threads.h"
 #include "os2codec.h"
 #ifdef __OS2__
 #include "os2native.h"
 #endif
 #include "eastring.h"
 
-//#define DISABLE_NEW_CODECS
 
-#ifdef __OS2__
-
+// #ifdef __OS2__
+// We now also use these mappings to look up the encoding from the codepage
+// number when parsing the /cp: command line switch.
 
 /* We tag a file with a non-default encoding under OS/2 by setting its .CODEPAGE
  * extended attribute. This (standardized but rarely-used) EA is meant to store
@@ -174,7 +175,7 @@ QString Codepage_Mappings[] = {
     "ISO-2022-JP"
 };
 
-#endif
+// #endif
 
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,7 @@ MainWindow::MainWindow()
     editor = new QeTextEdit( this );
 
     editor->setBackgroundVisible( true );
+    editor->document()->setUseDesignMetrics( false );
     QPalette p = editor->palette();
     p.setColor( QPalette::Background, QColor("#F0F0F0"));
     editor->setPalette(p);
@@ -241,6 +243,8 @@ MainWindow::MainWindow()
 
     readSettings();
 
+    openThread = 0;
+    isReadThreadActive = false;
     findDialog = 0;
     replaceDialog = 0;
     lastGoTo = 1;
@@ -262,21 +266,29 @@ MainWindow::MainWindow()
     icon.addFile(":/images/editor_64.png", QSize( 64, 64 ), QIcon::Normal, QIcon::On );
     icon.addFile(":/images/editor_80.png", QSize( 80, 80 ), QIcon::Normal, QIcon::On );
     setWindowIcon( icon );
+
 #endif
 
+    helpInstance = NULL;
+    createHelp();
+
     currentEncoding = "";
+    currentDir = QDir::currentPath();
     setCurrentFile("");
 }
 
 
-/*
+
 // ---------------------------------------------------------------------------
-// DESTRUCTOR (not currently needed for anything)
+// DESTRUCTOR
 //
 MainWindow::~MainWindow()
 {
+#ifdef __OS2__
+    if ( helpInstance ) OS2Native::destroyNativeHelp( helpInstance );
+#endif
 }
-*/
+
 
 
 // ---------------------------------------------------------------------------
@@ -463,6 +475,11 @@ void MainWindow::find()
         findDialog->raise();
         findDialog->activateWindow();
     }
+    QString selected = editor->textCursor().selectedText();
+    if ( recentFinds.count() > 0 )
+        findDialog->populateHistory( recentFinds );
+    if ( ! selected.trimmed().isEmpty() )
+        findDialog->setFindText( selected );
 }
 
 
@@ -492,6 +509,24 @@ void MainWindow::replace()
 {
     if ( !replaceDialog ) {
         replaceDialog = new ReplaceDialog( this );
+
+        connect( replaceDialog,
+                 SIGNAL( findNext( const QString &, bool, bool, bool )),
+                 this,
+                 SLOT( findNext( const QString &, bool, bool, bool )));
+        connect( replaceDialog,
+                 SIGNAL( findNextRegExp( const QString &, bool, bool )),
+                 this,
+                 SLOT( findNextRegExp( const QString &, bool, bool )));
+        connect( replaceDialog,
+                 SIGNAL( findPrevious( const QString &, bool, bool, bool )),
+                 this,
+                 SLOT( findPrevious( const QString &, bool, bool, bool )));
+        connect( replaceDialog,
+                 SIGNAL( findPreviousRegExp( const QString &, bool, bool )),
+                 this,
+                 SLOT( findPreviousRegExp( const QString &, bool, bool )));
+
         connect( replaceDialog,
                  SIGNAL( replaceNext( const QString &, const QString &, bool, bool, bool, bool )),
                  this,
@@ -530,7 +565,13 @@ void MainWindow::replace()
         replaceDialog->raise();
         replaceDialog->activateWindow();
     }
+    QString selected = editor->textCursor().selectedText();
+    if ( recentFinds.count() > 0 )
+        replaceDialog->populateHistory( recentFinds, recentReplaces );
+    if ( ! selected.trimmed().isEmpty() )
+        replaceDialog->setFindText( selected );
 }
+
 
 void MainWindow::goToLine()
 {
@@ -552,7 +593,7 @@ void MainWindow::about()
 {
     QMessageBox::about( this,
                         tr("Product Information"),
-                        tr("<b>Quick Text Editor</b><br>Version %1<hr>"
+                        tr("<b>QE Text Editor</b><br>Version %1<hr>"
                            "Copyright &copy;2018 Alexander Taylor"
                            "<p>Licensed under the GNU General Public License "
                            "version 3.0&nbsp;<br>"
@@ -560,6 +601,26 @@ void MainWindow::about()
                            "https://www.gnu.org/licenses/gpl.html</a>"
                            "<br></p>").arg( PROGRAM_VERSION )
                       );
+}
+
+
+void MainWindow::showGeneralHelp()
+{
+#ifdef __OS2__
+    OS2Native::showHelpPanel( helpInstance, HELP_PANEL_GENERAL );
+#else
+    launchAssistant( HELP_HTML_GENERAL );
+#endif
+}
+
+
+void MainWindow::showKeysHelp()
+{
+#ifdef __OS2__
+    OS2Native::showHelpPanel( helpInstance, HELP_PANEL_KEYS );
+#else
+    launchAssistant( HELP_HTML_KEYS );
+#endif
 }
 
 
@@ -675,8 +736,10 @@ void MainWindow::updateModified( bool isModified )
 void MainWindow::setEditorFont() {
     bool fontSelected;
     QFont font = QFontDialog::getFont( &fontSelected, editor->font(), this );
-    if ( fontSelected )
+    if ( fontSelected ) {
         editor->setFont( font );
+        editor->adjustSize();
+    }
 }
 
 
@@ -688,6 +751,8 @@ void MainWindow::findNext( const QString &str, bool cs, bool words, bool fromSta
     lastFind.bBackward = false;
     lastFind.bRe       = false;
 
+    updateFindHistory( str );
+
     QTextDocument::FindFlags flags = QTextDocument::FindFlags( 0 );
     if ( cs )
         flags |= QTextDocument::FindCaseSensitively;
@@ -696,7 +761,7 @@ void MainWindow::findNext( const QString &str, bool cs, bool words, bool fromSta
     int pos = fromStart ? 0 :
                           editor->textCursor().selectionEnd();
 
-    showFindResult( editor->document()->find( str, pos, flags ));
+    showFindResult( editor->document()->find( str, pos, flags ), str );
 }
 
 
@@ -708,13 +773,15 @@ void MainWindow::findNextRegExp( const QString &str, bool cs, bool fromStart )
     lastFind.bBackward = false;
     lastFind.bRe       = true;
 
+    updateFindHistory( str );
+
     QRegExp regexp( str );
     regexp.setCaseSensitivity( cs? Qt::CaseSensitive: Qt::CaseInsensitive );
 
     QTextDocument::FindFlags flags = QTextDocument::FindFlags( 0 );
     int pos = fromStart ? 0 :
                           editor->textCursor().selectionEnd();
-    showFindResult( editor->document()->find( regexp, pos, flags ));
+    showFindResult( editor->document()->find( regexp, pos, flags ), str );
 }
 
 
@@ -726,6 +793,8 @@ void MainWindow::findPrevious( const QString &str, bool cs, bool words, bool fro
     lastFind.bBackward = true;
     lastFind.bRe       = false;
 
+    updateFindHistory( str );
+
     QTextDocument::FindFlags flags = QTextDocument::FindBackward;
     if ( cs )
         flags |= QTextDocument::FindCaseSensitively;
@@ -733,7 +802,7 @@ void MainWindow::findPrevious( const QString &str, bool cs, bool words, bool fro
         flags |= QTextDocument::FindWholeWords;
     int pos = fromEnd ? editor->document()->characterCount() :
                         editor->textCursor().selectionStart();
-    showFindResult( editor->document()->find( str, pos, flags ));
+    showFindResult( editor->document()->find( str, pos, flags ), str );
 }
 
 
@@ -745,31 +814,37 @@ void MainWindow::findPreviousRegExp( const QString &str, bool cs, bool fromEnd )
     lastFind.bBackward = true;
     lastFind.bRe       = true;
 
+    updateFindHistory( str );
+
     QRegExp regexp( str );
     regexp.setCaseSensitivity( cs? Qt::CaseSensitive: Qt::CaseInsensitive );
 
     QTextDocument::FindFlags flags = QTextDocument::FindBackward;
     int pos = fromEnd ? editor->document()->characterCount() :
                         editor->textCursor().selectionStart();
-    showFindResult( editor->document()->find( regexp, pos, flags ));
+    showFindResult( editor->document()->find( regexp, pos, flags ), str );
 }
 
 
 void MainWindow::replaceNext( const QString &str, const QString &repl, bool cs, bool words, bool fromStart, bool confirm )
 {
+    updateFindHistory( str );
+    updateReplaceHistory( repl );
     QTextDocument::FindFlags flags = QTextDocument::FindFlags( 0 );
     if ( cs )
         flags |= QTextDocument::FindCaseSensitively;
     if ( words )
         flags |= QTextDocument::FindWholeWords;
     int pos = fromStart ? 0 :
-                          editor->textCursor().selectionEnd();
+                          editor->textCursor().selectionStart();
     QTextCursor found = editor->document()->find( str, pos, flags );
-    if ( showFindResult( found )) {
+    if ( showFindResult( found, str )) {
         if ( ! replaceFindResult( editor->textCursor(), repl, confirm )) {
-            // Clear selection but keep the cursor position at its end
+            // Clear selection but move the cursor position to its end
+            pos = found.selectionEnd();
             found = editor->textCursor();
             found.clearSelection();
+            found.setPosition( pos );
             editor->setTextCursor( found );
         }
     }
@@ -778,6 +853,9 @@ void MainWindow::replaceNext( const QString &str, const QString &repl, bool cs, 
 
 void MainWindow::replaceNextRegExp( const QString &str, const QString &repl, bool cs, bool fromStart, bool confirm )
 {
+    updateFindHistory( str );
+    updateReplaceHistory( repl );
+
     QRegExp regexp( str );
     regexp.setCaseSensitivity( cs? Qt::CaseSensitive: Qt::CaseInsensitive );
     QString replaceStr = repl;
@@ -791,15 +869,17 @@ void MainWindow::replaceNextRegExp( const QString &str, const QString &repl, boo
 
     QTextDocument::FindFlags flags = QTextDocument::FindFlags( 0 );
     int pos = fromStart ? 0 :
-                          editor->textCursor().selectionEnd();
+                          editor->textCursor().selectionStart();
     QTextCursor found = editor->document()->find( regexp, pos, flags );
-    if ( showFindResult( found )) {
+    if ( showFindResult( found, str )) {
         QString newText = found.selectedText();
         newText.replace( regexp, replaceStr );
         if ( !replaceFindResult( editor->textCursor(), newText, confirm )) {
-            // Clear selection but keep the cursor position at its end
+            // Clear selection but move the cursor position to its end
+            pos = found.selectionEnd();
             found = editor->textCursor();
             found.clearSelection();
+            found.setPosition( pos );
             editor->setTextCursor( found );
         }
     }
@@ -808,16 +888,18 @@ void MainWindow::replaceNextRegExp( const QString &str, const QString &repl, boo
 
 void MainWindow::replacePrevious( const QString &str, const QString &repl, bool cs, bool words, bool fromEnd, bool confirm )
 {
+    updateFindHistory( str );
+    updateReplaceHistory( repl );
     QTextDocument::FindFlags flags = QTextDocument::FindBackward;
     if ( cs )
         flags |= QTextDocument::FindCaseSensitively;
     if ( words )
         flags |= QTextDocument::FindWholeWords;
     int pos = fromEnd ? editor->document()->characterCount() :
-                        editor->textCursor().selectionStart();
+                        editor->textCursor().selectionEnd();
 
     QTextCursor found = editor->document()->find( str, pos, flags );
-    if ( showFindResult( found )) {
+    if ( showFindResult( found, str )) {
         if ( ! replaceFindResult( editor->textCursor(), repl, confirm )) {
             // Move the cursor to the selection start, then clear the selection
             pos = found.selectionStart();
@@ -832,6 +914,9 @@ void MainWindow::replacePrevious( const QString &str, const QString &repl, bool 
 
 void MainWindow::replacePreviousRegExp( const QString &str, const QString &repl, bool cs, bool fromEnd, bool confirm )
 {
+    updateFindHistory( str );
+    updateReplaceHistory( repl );
+
     QRegExp regexp( str );
     regexp.setCaseSensitivity( cs? Qt::CaseSensitive: Qt::CaseInsensitive );
     QString replaceStr = repl;
@@ -845,9 +930,9 @@ void MainWindow::replacePreviousRegExp( const QString &str, const QString &repl,
 
     QTextDocument::FindFlags flags = QTextDocument::FindBackward;
     int pos = fromEnd ? editor->document()->characterCount() :
-                        editor->textCursor().selectionStart();
+                        editor->textCursor().selectionEnd();
     QTextCursor found = editor->document()->find( regexp, pos, flags );
-    if ( showFindResult( found )) {
+    if ( showFindResult( found, str )) {
         QString newText = found.selectedText();
         newText.replace( regexp, replaceStr );
         if ( !replaceFindResult( editor->textCursor(), newText, confirm )) {
@@ -864,6 +949,7 @@ void MainWindow::replacePreviousRegExp( const QString &str, const QString &repl,
 
 void MainWindow::replaceAll( const QString &str, const QString &repl, bool cs, bool words, bool fromStart, bool confirm, bool backwards )
 {
+    updateFindHistory( str );
     QTextDocument::FindFlags flags = QTextDocument::FindFlags( 0 );
     if ( cs )
         flags |= QTextDocument::FindCaseSensitively;
@@ -873,39 +959,66 @@ void MainWindow::replaceAll( const QString &str, const QString &repl, bool cs, b
         flags = QTextDocument::FindBackward;
 
     int pos = fromStart ? 0 :
-                          editor->textCursor().selectionEnd();
+                          ( backwards? editor->textCursor().selectionEnd():
+                                       editor->textCursor().selectionStart() );
     QTextCursor found = editor->document()->find( str, pos, flags );
+
     if ( found.isNull() ) {
-        showMessage( tr("No matches."));
+        showMessage( tr("No matches found for: %1").arg( str ));
         found = editor->textCursor();
         found.clearSelection();
         return;
     }
-    if ( confirm ) {
-        int r = QMessageBox::question( this,
-                                       tr("Confirm"),
-                                       tr("Replace all occurences of \"%1\"?").arg( str ),
-                                       QMessageBox::Yes | QMessageBox::No,
-                                       QMessageBox::Yes
-                                    );
-        if ( r != QMessageBox::Yes )
-            return;
-    }
+
+    replaceDialog->close();
+    QMessageBox confirmBox( QMessageBox::Question,
+                            tr("Replace"),
+                            tr("Replace this text?"),
+                            0L, this );
+    confirmBox.addButton( tr("&Replace"), QMessageBox::YesRole );
+    QPushButton *btnAll   = confirmBox.addButton( tr("Replace &All"), QMessageBox::YesRole );
+    QPushButton *btnSkip  = confirmBox.addButton( tr("&Skip"),        QMessageBox::NoRole );
+    QPushButton *btnClose = confirmBox.addButton( QMessageBox::Close );
+
+    bool skip;
     int count = 0;
     while ( !found.isNull() ) {
-        count++;
-        found.insertText( repl );
-        found = editor->document()->find( str, found.selectionEnd(), flags );
+        skip = false;
+
+        QTextCursor temp( found );
+        temp.setPosition( temp.selectionStart() );
+        showMessage( tr("Found match at %1:%2").arg( temp.blockNumber() + 1 ).arg( temp.positionInBlock() ));
+        editor->setTextCursor( found );
+
+        if ( confirm ) {
+            confirmBox.exec();
+            QPushButton *r = (QPushButton *) confirmBox.clickedButton();
+            if ( r == btnSkip )  skip = true;
+            if ( r == btnClose ) break;
+            if ( r == btnAll )   confirm = false;
+        }
+        if ( !skip ) {
+            count++;
+            found.insertText( repl );
+        }
+        found = editor->document()->find( str,
+                                          (backwards? found.selectionStart(): found.selectionEnd()),
+                                          flags );
     }
     showMessage( tr("%1 occurences replaced.").arg( count ));
     found = editor->textCursor();
     found.clearSelection();
+    editor->setCenterOnScroll( true );
     editor->setTextCursor( found );
+    editor->setCenterOnScroll( false );
 }
 
 
 void MainWindow::replaceAllRegExp( const QString &str, const QString &repl, bool cs, bool fromStart, bool confirm, bool backwards )
 {
+    updateFindHistory( str );
+    updateReplaceHistory( repl );
+
     QRegExp regexp( str );
     regexp.setCaseSensitivity( cs? Qt::CaseSensitive: Qt::CaseInsensitive );
     QString replaceStr = repl;
@@ -923,37 +1036,80 @@ void MainWindow::replaceAllRegExp( const QString &str, const QString &repl, bool
     if ( backwards )
         flags = QTextDocument::FindBackward;
     int pos = fromStart ? 0 :
-                          editor->textCursor().selectionEnd();
+                          ( backwards? editor->textCursor().selectionEnd():
+                                       editor->textCursor().selectionStart() );
     QTextCursor found = editor->document()->find( regexp, pos, flags );
     if ( found.isNull() ) {
-        showMessage( tr("No matches."));
+        showMessage( tr("No matches found for: %1").arg( str ));
         found = editor->textCursor();
         found.clearSelection();
         return;
     }
-    if ( confirm ) {
-        int r = QMessageBox::question( this,
-                                       tr("Confirm"),
-                                       tr("Replace all occurences of text matching expression \"%1\"?").arg( str ),
-                                       QMessageBox::Yes | QMessageBox::No,
-                                       QMessageBox::Yes
-                                    );
-        if ( r != QMessageBox::Yes )
-            return;
-    }
+
+    replaceDialog->close();
+    QMessageBox confirmBox( QMessageBox::Question,
+                            tr("Replace"),
+                            tr("Replace this text?"),
+                            0L, this );
+    confirmBox.addButton( tr("&Replace"), QMessageBox::YesRole );
+    QPushButton *btnAll   = confirmBox.addButton( tr("Replace &All"), QMessageBox::YesRole );
+    QPushButton *btnSkip  = confirmBox.addButton( tr("&Skip"),        QMessageBox::NoRole );
+    QPushButton *btnClose = confirmBox.addButton( QMessageBox::Close );
+
+    bool skip;
     int count = 0;
     QString newText;
     while ( !found.isNull() ) {
-        count++;
-        newText = found.selectedText();
-        newText.replace( regexp, replaceStr );
-        found.insertText( replaceStr );
-        found = editor->document()->find( regexp, found.selectionEnd(), flags );
+        skip = false;
+
+        QTextCursor temp( found );
+        temp.setPosition( temp.selectionStart() );
+        showMessage( tr("Found match at %1:%2").arg( temp.blockNumber() + 1 ).arg( temp.positionInBlock() ));
+        editor->setTextCursor( found );
+
+        if ( confirm ) {
+            confirmBox.exec();
+            QPushButton *r = (QPushButton *) confirmBox.clickedButton();
+            if ( r == btnSkip )  skip = true;
+            if ( r == btnClose ) break;
+            if ( r == btnAll )   confirm = false;
+        }
+        if ( !skip ) {
+            count++;
+            newText = found.selectedText();
+            newText.replace( regexp, replaceStr );
+            found.insertText( newText );
+        }
+        found = editor->document()->find( regexp,
+                                          (backwards? found.selectionStart(): found.selectionEnd()),
+                                          flags );
     }
     showMessage( tr("%1 occurences replaced.").arg( count ));
     found = editor->textCursor();
     found.clearSelection();
     editor->setTextCursor( found );
+}
+
+
+void MainWindow::updateFindHistory( const QString &findString )
+{
+    if ( findString.isEmpty() ) return;
+    if ( recentFinds.startsWith( findString )) return;
+    recentFinds.removeAll( findString );
+    recentFinds.prepend( findString );
+    while ( recentFinds.size() > MaxRecentFinds )
+        recentFinds.removeLast();
+}
+
+
+void MainWindow::updateReplaceHistory( const QString &replaceString )
+{
+    if ( replaceString.isEmpty() ) return;
+    if ( recentReplaces.startsWith( replaceString )) return;
+    recentReplaces.removeAll( replaceString );
+    recentReplaces.prepend( replaceString );
+    while ( recentReplaces.size() > MaxRecentFinds )
+        recentReplaces.removeLast();
 }
 
 
@@ -963,6 +1119,13 @@ void MainWindow::setTextEncoding()
     QString newEncoding = action->data().toString();
     if ( newEncoding.compare( currentEncoding ) != 0 ) {
         currentEncoding = newEncoding;
+
+        // A currentEncoding of "" normally means use the default locale; however
+        // when opening a file it will trigger an attempt to load the encoding from
+        // the file attribute (OS/2 only), falling back to default otherwise.  To
+        // force the file to be opened in the default encoding, set currentEncoding
+        // to "Default" before calling loadFile (it will be reset to "" after the file
+        // is opened).
 
         if ( isWindowModified() ) {
 #if 0
@@ -990,6 +1153,7 @@ void MainWindow::setTextEncoding()
                 // Change empty to "Default" temporarily to get the right logic path in loadFile
                 if ( currentEncoding == "") currentEncoding = "Default";
                 loadFile( currentFile, false );
+                return;     // the file-loading routine will update the GUI as needed
             }
             else
                 encodingChanged = true;
@@ -1000,12 +1164,60 @@ void MainWindow::setTextEncoding()
 }
 
 
+void MainWindow::setTextEncoding( QString newEncoding )
+{
+    if ( newEncoding.compare( currentEncoding ) != 0 ) {
+        currentEncoding = newEncoding;
+
+        if ( isWindowModified() ) {
+            encodingChanged = true;
+        }
+        else if ( !currentFile.isEmpty() ) {
+            // Ask whether to re-parse the file with the new encoding
+            int r = QMessageBox::question( this,
+                                           tr("Re-load File?"),
+                                           tr("You have changed the text encoding for this file. "
+                                              "Do you want to refresh the file from disk using the new encoding?"),
+                                           QMessageBox::Yes | QMessageBox::No,
+                                           QMessageBox::Yes
+                                        );
+            if ( r == QMessageBox::Yes ) {
+                // Change empty to "Default" temporarily to get the right logic path in loadFile
+                if ( currentEncoding == "") currentEncoding = "Default";
+                loadFile( currentFile, false );
+                return;     // the file-loading routine will update the GUI as needed
+            }
+            else
+                encodingChanged = true;
+        }
+        updateEncoding();
+    }
+}
+
+
+void MainWindow::openAsEncoding( QString fileName, bool createIfNew, QString encoding )
+{
+    // The user has told us to force a specific codepage to be used for reading this
+    // file (overriding any that may be set in the EA).
+    //
+    if ( mapNameToEncoding( encoding )) {
+        currentEncoding = encoding;
+        // Changing empty to "Default" temporarily disables setting encoding from EA
+        if ( currentEncoding == "") currentEncoding = "Default";
+    }
+    loadFile( fileName, createIfNew );
+}
+
+
 // ---------------------------------------------------------------------------
 // OTHER METHODS
 //
 
 void MainWindow::createActions()
 {
+    // NOTE: Since we don't have an OS/2-native Qt theme, we have to use some
+    // #ifdef's to specify a few OS/2-specific shortcuts.  Other platforms can
+    // mostly use the standard aliases.
 
     // File menu actions
 
@@ -1024,7 +1236,11 @@ void MainWindow::createActions()
 //    QList<QKeySequence> saveShortcuts;
 //    saveShortcuts << QKeySequence("F2") << QKeySequence("Ctrl+S");
 //    saveAction->setShortcuts( saveShortcuts );
+#ifdef __OS2__
     saveAction->setShortcut( tr("F2"));
+#else
+    saveAction->setShortcut( QKeySequence::Save );
+#endif
     saveAction->setStatusTip( tr("Save the current file") );
     connect( saveAction, SIGNAL( triggered() ), this, SLOT( save() ));
 
@@ -1121,7 +1337,7 @@ void MainWindow::createActions()
     findAgainAction->setEnabled( false );
     connect( findAgainAction, SIGNAL( triggered() ), this, SLOT( findAgain() ));
 
-    replaceAction = new QAction( tr("&Replace..."), this );
+    replaceAction = new QAction( tr("Find/&Replace..."), this );
     QList<QKeySequence> replaceShortcuts;
     replaceShortcuts << QKeySequence("Ctrl+R") << QKeySequence::Replace;
     replaceAction->setShortcuts( replaceShortcuts );
@@ -1157,6 +1373,14 @@ void MainWindow::createActions()
     fontAction->setStatusTip( tr("Change the edit window font") );
     connect( fontAction, SIGNAL( triggered() ), this, SLOT( setEditorFont() ));
 
+    helpGeneralAction = new QAction( tr("General &help"), this );
+    helpGeneralAction->setStatusTip( tr("General program help") );
+    helpGeneralAction->setShortcut( tr("F1") );
+    connect( helpGeneralAction, SIGNAL( triggered() ), this, SLOT( showGeneralHelp() ));
+
+    helpKeysAction = new QAction( tr("&Keys help"), this );
+    helpKeysAction->setStatusTip( tr("Help on keyboard commands") );
+    connect( helpKeysAction, SIGNAL( triggered() ), this, SLOT( showKeysHelp() ));
 
     aboutAction = new QAction( tr("&Product information"), this );
     aboutAction->setStatusTip( tr("Show product information") );
@@ -1181,21 +1405,21 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( win1252Action );
     win1252Action->setCheckable( true );
     win1252Action->setData("Windows-1252");
-    win1252Action->setStatusTip( tr("Microsoft Latin-1 encoding for Western European languages; it is a superset of ISO-8859-1."));
+    win1252Action->setStatusTip( tr("Microsoft Latin-1 encoding for Western European languages (a superset of the official ISO-8859-1 standard)."));
     connect( win1252Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     iso885915Action = new QAction( tr("Latin-9 (ISO-8859-15)"), this );
     encodingGroup->addAction( iso885915Action );
     iso885915Action->setCheckable( true );
     iso885915Action->setData("ISO 8859-15");
-    iso885915Action->setStatusTip( tr("ISO Latin-9 encoding for Western European languages. It supports the same languages as Windows-1252 but is not 100% compatible."));
+    iso885915Action->setStatusTip( tr("ISO Latin-9 encoding for Western European languages. Supports the same languages as Windows-1252 but is not 100% compatible."));
     connect( iso885915Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     aromanAction = new QAction( tr("Mac OS Roman (Macintosh)"), this );
     encodingGroup->addAction( aromanAction );
     aromanAction->setCheckable( true );
     aromanAction->setData("Apple Roman");
-    aromanAction->setStatusTip( tr("A text encoding used under Mac OS 9 and older. It supports several Western languages and includes various graphical symbols."));
+    aromanAction->setStatusTip( tr("A text encoding used under Mac OS 9 and older; supports several Western languages and includes various graphical symbols."));
     connect( aromanAction, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm850Action = new QAction( tr("Multilingual (IBM-850)"), this );
@@ -1217,14 +1441,14 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( ibm858Action );
     ibm858Action->setCheckable( true );
     ibm858Action->setData("IBM-858");
-    ibm858Action->setStatusTip( tr("Commonly used for Western languages under OS/2 (post-1997); this is an updated version of IBM-850 (official designation IBM-858)."));
+    ibm858Action->setStatusTip( tr("Commonly used for Western languages under OS/2; this is an updated version of IBM-850 (official designation IBM-858)."));
     connect( ibm858Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm859Action = new QAction( tr("Western European (IBM-859)"), this );
     encodingGroup->addAction( ibm859Action );
     ibm859Action->setCheckable( true );
     ibm859Action->setData("IBM-859");
-    ibm859Action->setStatusTip( tr("IBM encoding of the Latin-9 character set for OS/2 systems. It is not compatible with ISO-8859-15, and is rarely used."));
+    ibm859Action->setStatusTip( tr("IBM Latin-9 encoding for OS/2 systems. It is not compatible with ISO-8859-15, and is rarely used."));
     connect( ibm859Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm860Action = new QAction( tr("Portuguese (IBM-860)"), this );
@@ -1248,7 +1472,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( win1250Action );
     win1250Action->setCheckable( true );
     win1250Action->setData("Windows-1250");
-    win1250Action->setStatusTip( tr("Microsoft encoding for Central and East European languages. It is not entirely compatible with ISO-8859-2."));
+    win1250Action->setStatusTip( tr("Microsoft encoding for Central and East European languages. It is not (quite) compatible with ISO-8859-2."));
     connect( win1250Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     iso88592Action = new QAction( tr("Latin-2 (ISO-8859-2)"), this );
@@ -1263,7 +1487,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( ibm852Action );
     ibm852Action->setCheckable( true );
     ibm852Action->setData("IBM-852");
-    ibm852Action->setStatusTip( tr("IBM encoding of the Latin-2 character set for Central and East European languages.  Mainly used under DOS and OS/2."));
+    ibm852Action->setStatusTip( tr("IBM Latin-2 encoding for Central and East European languages. Mainly used under DOS and OS/2."));
     connect( ibm852Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 #endif
 
@@ -1368,7 +1592,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( ibm857Action );
     ibm857Action->setCheckable( true );
     ibm857Action->setData("IBM-857");
-    ibm857Action->setStatusTip( tr("Turkish (Latin-5) text encoding used under OS/2 and DOS.  Not compatible with ISO-8859-9."));
+    ibm857Action->setStatusTip( tr("Turkish (Latin-5) text encoding used under OS/2 and DOS. Not compatible with ISO-8859-9."));
     connect( ibm857Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm869Action = new QAction( tr("Greek (IBM-869)"), this );
@@ -1392,7 +1616,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( win1251Action );
     win1251Action->setCheckable( true );
     win1251Action->setData("Windows-1251");
-    win1251Action->setStatusTip( tr("Microsoft encoding for Cyrillic languages. It is not compatible with ISO-8859-5, but does include Ukrainian support."));
+    win1251Action->setStatusTip( tr("Microsoft encoding for Cyrillic languages. It is not compatible with ISO-8859-5, but includes Ukrainian support."));
     connect( win1251Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm866Action = new QAction( tr("Russian (IBM-866)"), this );
@@ -1421,7 +1645,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( ibm855Action );
     ibm855Action->setCheckable( true );
     ibm855Action->setData("IBM-855");
-    ibm855Action->setStatusTip( tr("IBM encoding for Bulgarian and the Balkan languages.  Mainly used under DOS and OS/2."));
+    ibm855Action->setStatusTip( tr("IBM encoding for Bulgarian and the Balkan languages. Mainly used under DOS and OS/2."));
     connect( ibm855Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     ibm1125Action = new QAction( tr("Ukrainian (IBM-1125)"), this );
@@ -1452,14 +1676,14 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( gbkAction );
     gbkAction->setCheckable( true );
     gbkAction->setData("GB18030-0");
-    gbkAction->setStatusTip( tr("This is used for Chinese text encoding in mainland China; it is a superset of the older GBK standard."));
+    gbkAction->setStatusTip( tr("This is used for Chinese text encoding in mainland China; it is a superset of a previous standard called GBK."));
     connect( gbkAction, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     gbAction = new QAction( tr("Chinese (GB2312)"), this );
     encodingGroup->addAction( gbAction );
     gbAction->setCheckable( true );
     gbAction->setData("GB2312");
-    gbAction->setStatusTip( tr("This is an older standard for Chinese text in mainland China; it has been largely superseded by GB18030."));
+    gbAction->setStatusTip( tr("This is an older standard for Chinese text in mainland China. Largely superseded by GBK and GB18030."));
     connect( gbAction, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     eucJpAction = new QAction( tr("Japanese (EUC-JP)"), this );
@@ -1547,7 +1771,7 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( win1255Action );
     win1255Action->setCheckable( true );
     win1255Action->setData("Windows-1255");
-    win1255Action->setStatusTip( tr("Microsoft encoding for Hebrew and Yiddish text. It is broadly a superset of ISO-8859-8, but is not 100% compatible."));
+    win1255Action->setStatusTip( tr("Microsoft encoding for Hebrew and Yiddish text. Mainly a superset of ISO-8859-8, but not 100% compatible."));
     connect( win1255Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
 #ifndef DISABLE_NEW_CODECS
@@ -1572,14 +1796,14 @@ void MainWindow::createEncodingActions()
     encodingGroup->addAction( utf16Action );
     utf16Action->setCheckable( true );
     utf16Action->setData("UTF-16LE");
-    utf16Action->setStatusTip( tr("UTF-16 (little endian) is a multi-byte Unicode encoding.  It is rarely used for text files, and is not directly compatible with basic ASCII."));
+    utf16Action->setStatusTip( tr("UTF-16 (little endian) is a multi-byte Unicode encoding. It is rarely used for text files, and is not directly compatible with basic ASCII."));
     connect( utf16Action, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     utf16beAction = new QAction( tr("Unicode UTF-16 &BE"), this );
     encodingGroup->addAction( utf16beAction );
     utf16beAction->setCheckable( true );
     utf16beAction->setData("UTF-16BE");
-    utf16beAction->setStatusTip( tr("UTF-16 (big endian) is a multi-byte Unicode encoding.  It is rarely used for text files, and is not directly compatible with basic ASCII."));
+    utf16beAction->setStatusTip( tr("UTF-16 (big endian) is a multi-byte Unicode encoding. It is rarely used for text files, and is not directly compatible with basic ASCII."));
     connect( utf16beAction, SIGNAL( triggered() ), this, SLOT( setTextEncoding() ));
 
     utf8Action = new QAction( tr("&Unicode UTF-8"), this );
@@ -1747,6 +1971,9 @@ void MainWindow::createMenus()
 
     menuBar()->addSeparator();
     helpMenu = menuBar()->addMenu( tr("&Help"));
+    helpMenu->addAction( helpGeneralAction );
+    helpMenu->addAction( helpKeysAction );
+    helpMenu->addSeparator();
     helpMenu->addAction( aboutAction );
 
 }
@@ -1796,6 +2023,16 @@ void MainWindow::createStatusBar()
 }
 
 
+void MainWindow::createHelp()
+{
+#ifdef __OS2__
+    helpInstance = OS2Native::setNativeHelp( this, QString("qe.hlp"), tr("QE Help") );
+#else
+    helpProcess = new QProcess( this );
+#endif
+}
+
+
 void MainWindow::readSettings()
 {
     QSettings settings( SETTINGS_VENDOR, SETTINGS_APP );
@@ -1806,6 +2043,8 @@ void MainWindow::readSettings()
     updateRecentFileActions();
 
     currentFilter = settings.value("lastFilter", tr("All files (*)")).toString();
+    recentFinds = settings.value("recentFinds").toStringList();
+    recentReplaces = settings.value("recentReplaces").toStringList();
 
     toggleEditMode( settings.value("overwrite", false ).toBool() );
     editModeAction->setChecked( editor->overwriteMode() );
@@ -1833,15 +2072,17 @@ void MainWindow::writeSettings()
 {
     QSettings settings( SETTINGS_VENDOR, SETTINGS_APP );
 
-    settings.setValue("geometry",    saveGeometry() );
-    settings.setValue("lastFilter",  currentFilter );
-    settings.setValue("recentFiles", recentFiles );
-    settings.setValue("overwrite",   editor->overwriteMode() );
+    settings.setValue("geometry",       saveGeometry() );
+    settings.setValue("lastFilter",     currentFilter );
+    settings.setValue("recentFinds",    recentFinds );
+    settings.setValue("recentReplaces", recentReplaces );
+    settings.setValue("recentFiles",    recentFiles );
+    settings.setValue("overwrite",      editor->overwriteMode() );
     settings.setValue("wrapMode",
                       (editor->wordWrapMode() == QTextOption::WrapAtWordBoundaryOrAnywhere )?
                       true: false
                      );
-    settings.setValue("editorFont",  editor->font().toString() );
+    settings.setValue("editorFont",     editor->font().toString() );
 }
 
 
@@ -1867,8 +2108,9 @@ bool MainWindow::okToContinue()
 
 bool MainWindow::loadFile( const QString &fileName, bool createIfNew )
 {
-    QFile file( fileName );
-    if ( !file.open( QIODevice::ReadOnly | QFile::Text )) {
+    QFile *file = new QFile( fileName );
+
+    if ( !file->open( QIODevice::ReadOnly | QFile::Text )) {
         if ( createIfNew ) {
             editor->clear();
             showMessage( tr("New file: %1").arg( QDir::toNativeSeparators( fileName )));
@@ -1880,30 +2122,53 @@ bool MainWindow::loadFile( const QString &fileName, bool createIfNew )
         }
     }
     else {
-        QTextStream in( &file );
+        QTextCodec *codec;
         // currentEncoding is always reset to "" when doing an explicit open
         if ( currentEncoding.isEmpty() ) {
             currentEncoding = getFileCodepage( fileName );
             if ( !currentEncoding.isEmpty() )
-                in.setCodec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
+                codec = QTextCodec::codecForName( currentEncoding.toLatin1().data() );
             else
-                in.setCodec( QTextCodec::codecForLocale() );
+                codec = QTextCodec::codecForLocale();
         }
         else {
             // This will only be used if we're doing a reload of the current file
             if ( currentEncoding == "Default") {
-                in.setCodec( QTextCodec::codecForLocale() );
+                codec = QTextCodec::codecForLocale();
                 currentEncoding = "";
             }
             else
-                in.setCodec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
+                codec = QTextCodec::codecForName( currentEncoding.toLatin1().data() );
         }
+        QApplication::setOverrideCursor( Qt::WaitCursor );
+
+#ifdef USE_IO_THREADS
+
+        showMessage( tr("Opening %1").arg( QDir::toNativeSeparators( fileName )));
+        menuBar()->setEnabled( false );
+//        editor->document()->clear();
+        editor->setEnabled( false );
+        if ( !openThread )
+            openThread = new QeOpenThread();
+        connect( openThread, SIGNAL( updateProgress( int )), this, SLOT( readProgress( int )));
+        connect( openThread, SIGNAL( finished() ), this, SLOT( readDone() ));
+        openThread->setFile( file, codec, fileName );
+        openThread->start();
+        isReadThreadActive = true;
+        return true;
+#else
+
+        QTextStream in( file );
+        in.setCodec( codec );
         QString text = in.readAll();
         editor->setPlainText( text );
-        file.close();
+        file->close();
+        delete file;
+        QApplication::restoreOverrideCursor();
         showMessage( tr("Opened file: %1").arg( QDir::toNativeSeparators( fileName )));
-    }
+#endif
 
+    }
     setCurrentFile( fileName );
     return true;
 }
@@ -1953,6 +2218,7 @@ bool MainWindow::saveFile( const QString &fileName )
         QMessageBox::critical( this, tr("Error"), tr("Error writing file"));
         return false;
     }
+#ifdef USE_IO_THREADS
     QTextStream out( &file );
     out.setCodec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
     QString text = editor->toPlainText();
@@ -1982,6 +2248,25 @@ bool MainWindow::saveFile( const QString &fileName )
     if ( !currentEncoding.isEmpty() ) {
         setFileCodepage( fileName, currentEncoding );
     }
+#else
+
+    QApplication::setOverrideCursor( Qt::WaitCursor );
+    menuBar()->setEnabled( false );
+    editor->setEnabled( false );
+
+    showMessage( tr("Saving %1").arg( QDir::toNativeSeparators( fileName )));
+    if ( !saveThread )
+        saveThread = new QeSaveThread();
+    connect( saveThread, SIGNAL( updateProgress( int )), this, SLOT( saveProgress( int )));
+    connect( saveThread, SIGNAL( saveComplete( qint64 )), this, SLOT( saveDone( qint64 )));
+    QTextCodec codec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
+    saveThread->setFile( file, codec, fileName );
+    saveThread->fullText = editor->toPlainText();
+    saveThread->start();
+    isSaveThreadActive = true;
+
+#endif      // USE_IO_THREADS
+
     return true;
 }
 
@@ -2002,7 +2287,6 @@ bool MainWindow::print()
 void MainWindow::setCurrentFile( const QString &fileName )
 {
     currentFile = fileName;
-    currentDir = QDir::currentPath();
     updateModified( false );
     encodingChanged = false;
     QString shownName = tr("Untitled");
@@ -2023,8 +2307,10 @@ void MainWindow::setCurrentFile( const QString &fileName )
 void MainWindow::updateRecentFileActions()
 {
     QMutableStringListIterator i( recentFiles );
+    int fileCount = 0;
     while ( i.hasNext() ) {
-        if ( !QFile::exists( i.next() )) {
+        fileCount++;
+        if ( !QFile::exists( i.next() ) || ( fileCount > MaxRecentFiles )) {
             i.remove();
         }
     }
@@ -2059,13 +2345,22 @@ void MainWindow::showMessage( const QString &message )
 
 void MainWindow::showUsage()
 {
+#if defined( Q_OS_WIN32 )
+#define SWITCH_CHAR     '/'
+#elif defined( Q_OS_OS2 )
+#define SWITCH_CHAR     '/'
+#else
+#define SWITCH_CHAR     '-'
+#endif
+
     QMessageBox::information( this, tr("Usage"),
                               tr("<b>Usage:</b><br> &nbsp; <tt>qe [ <i>filename</i> ] [ <i>options</i> ]</tt>"
                                  "<p><b>Options:</b>"
                                  "<table>"
-                                  "<tr><td> &nbsp; /read</td> <td style=\"padding-left: 1em;\">Read-only mode</td></tr>"
-                                  "<tr><td> &nbsp; /?   </td> <td style=\"padding-left: 1em;\">Show usage information</td></tr>"
-                                  "</table>"),
+                                  "<tr><td> &nbsp; %1read</td> <td style=\"padding-left: 1em;\">Read-only mode</td></tr>"
+                                  "<tr><td> &nbsp; %1enc:&lt;encoding&gt;</td> <td style=\"padding-left: 1em;\">Use the specified encoding</td></tr>"
+                                  "<tr><td> &nbsp; %1?   </td> <td style=\"padding-left: 1em;\">Show usage information</td></tr>"
+                                  "</table>").arg( SWITCH_CHAR ),
                               QMessageBox::Ok
                             );
 }
@@ -2094,12 +2389,12 @@ void MainWindow::updateEncoding()
 }
 
 
-bool MainWindow::showFindResult( QTextCursor found )
+bool MainWindow::showFindResult( QTextCursor found, const QString &str )
 {
     bool isFound = false;
     findAgainAction->setEnabled( true );
     if ( found.isNull() ) {
-        showMessage( tr("No matches."));
+        showMessage( tr("No matches found for: %1").arg( str ));
         found = editor->textCursor();
         found.clearSelection();
     }
@@ -2109,7 +2404,9 @@ bool MainWindow::showFindResult( QTextCursor found )
         showMessage( tr("Found match at %1:%2").arg( temp.blockNumber() + 1 ).arg( temp.positionInBlock() ));
         isFound = true;
     }
+    editor->setCenterOnScroll( true );
     editor->setTextCursor( found );
+    editor->setCenterOnScroll( false );
     return isFound;
 }
 
@@ -2139,6 +2436,41 @@ bool MainWindow::replaceFindResult( QTextCursor found, const QString newText, bo
 }
 
 
+bool MainWindow::mapNameToEncoding( QString &encoding )
+{
+    bool bOK = false;
+
+    // First we try to interpret it as a numeric codepage number
+    unsigned int iCP = encoding.toUInt( &bOK );
+    if ( bOK ) {
+        int iMax = sizeof( Codepage_CCSIDs ) / sizeof ( int );
+        for ( int i = 0; i < iMax; i++ ) {
+            if ( iCP == Codepage_CCSIDs[ i ] ) {
+                encoding = Codepage_Mappings[ i ];
+                bOK = true;
+                break;
+            }
+        }
+    }
+    // If that didn't work, see if it matches one of our encoding names verbatim
+    else {
+        QList<QAction *> actions = encodingGroup->actions();
+        for ( int i = 0; i < actions.size(); i++ ) {
+            if ( QString::compare( actions.at( i )->data().toString(), encoding, Qt::CaseInsensitive ) == 0 ) {
+                bOK = true;
+                // Sync the passed string with the matching one so that it has the proper case
+                encoding = actions.at( i )->data().toString();
+                break;
+            }
+        }
+    }
+    if ( !bOK )
+        encoding = "";
+
+    return ( bOK );
+}
+
+
 QString MainWindow::getFileCodepage( const QString &fileName )
 {
     QString encoding("");
@@ -2153,32 +2485,8 @@ QString MainWindow::getFileCodepage( const QString &fileName )
 
     if ( !encoding.isEmpty() ) {
         // We found a value, now try and map it to something meaningful
-
-        bool bOK = false;
-        // First we try to interpret it as a numeric codepage number
-        unsigned int iCP = encoding.toUInt( &bOK );
-        if ( bOK ) {
-            int iMax = sizeof( Codepage_CCSIDs ) / sizeof ( int );
-            for ( int i = 0; i < iMax; i++ ) {
-                if ( iCP == Codepage_CCSIDs[ i ] ) {
-                    encoding = Codepage_Mappings[ i ];
-                    bOK = true;
-                    break;
-                }
-            }
-        }
-        // If that didn't work, see if it matches one of our encoding names verbatim
-        else {
-            QList<QAction *> actions = encodingGroup->actions();
-            for ( int i = 0; i < actions.size(); i++ ) {
-                if ( QString::compare( actions.at( i )->data().toString(), encoding ) == 0 ) {
-                    bOK = true;
-                    break;
-                }
-            }
-        }
-        if ( !bOK )
-            encoding = "";
+        // (if this call fails, encoding will be changed to "")
+        mapNameToEncoding( encoding );
     }
 #else
     // Keep the compiler happy
@@ -2225,4 +2533,117 @@ void MainWindow::setFileCodepage( const QString &fileName, const QString &encodi
 #endif
 }
 
+
+void MainWindow::readProgress( int percent )
+{
+#ifdef USE_IO_THREADS
+
+    if ( !isReadThreadActive ) return;
+    showMessage( tr("Opening %1 (%2%)").arg( QDir::toNativeSeparators( openThread->inputFileName )).arg( percent ));
+
+    // TODO update progress bar, once implemented
+#endif
+}
+
+
+void MainWindow::readDone()
+{
+#ifdef USE_IO_THREADS
+
+    isReadThreadActive = false;
+    if ( !openThread ) return;
+
+    showMessage( tr("Opening %1 (100%)").arg( QDir::toNativeSeparators( openThread->inputFileName )));
+    editor->setUpdatesEnabled( false );
+    editor->setPlainText( openThread->getText() );
+    editor->setUpdatesEnabled( true );
+
+//  TODO hide progress bar, once implemented
+
+    menuBar()->setEnabled( true );
+    editor->setEnabled( true );
+
+    QApplication::restoreOverrideCursor();
+    showMessage( tr("Opened file: %1").arg( QDir::toNativeSeparators( openThread->inputFileName )));
+    setCurrentFile( openThread->inputFileName );
+
+    editor->setFocus( Qt::OtherFocusReason );
+
+#endif
+}
+
+
+void MainWindow::readCancel()
+{
+#ifdef USE_IO_THREADS
+    if ( openThread )
+        openThread->cancel();
+
+    menuBar()->setEnabled( true );
+    editor->setEnabled( true );
+    QApplication::restoreOverrideCursor();
+    editor->setFocus( Qt::OtherFocusReason );
+
+    showMessage( tr("Cancelled."));
+
+#endif
+}
+
+
+void MainWindow::saveDone( qint64 iSize )
+{
+#ifdef USE_IO_THREADS
+
+    isSaveThreadActive = false;
+    if ( !saveThread ) return;
+
+//    cancel progress indicator, if any
+
+    if ( !currentEncoding.isEmpty() ) {
+        setFileCodepage( saveThread->outputFileName, currentEncoding );
+    }
+    showMessage( tr("Saved file: %1 (%2 bytes written)").arg( QDir::toNativeSeparators( saveThread->outputFileName )).arg( iSize ));
+    setCurrentFile( saveThread->outputFileName );
+
+    menuBar()->setEnabled( true );
+    editor->setEnabled( true );
+    QApplication::restoreOverrideCursor();
+
+    editor->setFocus( Qt::OtherFocusReason );
+
+#endif
+}
+
+
+void MainWindow::saveProgress( int percent )
+{
+#ifdef USE_IO_THREADS
+
+    if ( !isSaveThreadActive ) return;
+    showMessage( tr("Saving %1 (%2%)").arg( QDir::toNativeSeparators( saveThread->outputFileName )).arg( percent ));
+
+#endif
+}
+
+
+void MainWindow::launchAssistant( const QString &panel )
+{
+    QString assistant = QLibraryInfo::location( QLibraryInfo::BinariesPath )
+                        + QLatin1String("/assistant");
+    QStringList args;
+    args << QLatin1String("-collectionFile")
+         << QLatin1String("qe.qhc")
+         << QLatin1String("-enableRemoteControl");
+    helpProcess->start( assistant, args );
+    if ( !helpProcess->waitForStarted() ) {
+        helpProcess->start( QLatin1String("assistant"), args );
+        if ( !helpProcess->waitForStarted() ) {
+            showMessage( tr("Help viewer not available."));
+            return;
+        }
+    }
+    QByteArray assistantInput;
+    assistantInput.append("setSource " + QString( HELP_HTML_ROOT ) + panel + QString("\n"));
+    helpProcess->write( assistantInput );
+}
 

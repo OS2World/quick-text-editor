@@ -9,7 +9,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>383</width>
+    <width>393</width>
     <height>199</height>
    </rect>
   </property>
@@ -33,9 +33,6 @@
           <cstring>findEdit</cstring>
          </property>
         </widget>
-       </item>
-       <item row="0" column="1">
-        <widget class="QLineEdit" name="findEdit"/>
        </item>
        <item row="1" column="0">
         <spacer name="spacer">
@@ -83,7 +80,7 @@
          <item row="2" column="0">
           <widget class="QCheckBox" name="wordCheckBox">
            <property name="text">
-            <string>Match whole words</string>
+            <string>Match whole &amp;words</string>
            </property>
           </widget>
          </item>
@@ -108,6 +105,16 @@
           </size>
          </property>
         </spacer>
+       </item>
+       <item row="0" column="1">
+        <widget class="QComboBox" name="findEdit">
+         <property name="editable">
+          <bool>true</bool>
+         </property>
+         <property name="insertPolicy">
+          <enum>QComboBox::NoInsert</enum>
+         </property>
+        </widget>
        </item>
       </layout>
      </item>
@@ -164,6 +171,7 @@
   <tabstop>startCheckBox</tabstop>
   <tabstop>keepCheckBox</tabstop>
   <tabstop>findButton</tabstop>
+  <tabstop>cancelButton</tabstop>
  </tabstops>
  <resources/>
  <connections/>

@@ -30,21 +30,34 @@ FindDialog::FindDialog( QWidget *parent )
 {
     setupUi( this );
     connect( cancelButton, SIGNAL( clicked() ), this, SLOT( close() ));
-
+    findEdit->lineEdit()->installEventFilter( this );
     findEdit->installEventFilter( this );
+}
+
+
+void FindDialog::show()
+{
+    findEdit->setFocus();
+    QDialog::show();
 }
 
 
 void FindDialog::doFind()
 {
-    if ( !findEdit->text().isEmpty() )
+    if ( !findEdit->currentText().isEmpty() )
         on_findButton_clicked();
 }
 
 
-void FindDialog::on_findEdit_textChanged( const QString &text )
+void FindDialog::on_findEdit_editTextChanged( const QString &text )
 {
     findButton->setEnabled( !text.isEmpty() );
+}
+
+
+void FindDialog::on_findEdit_currentIndexChanged( int index )
+{
+    findEdit->lineEdit()->selectAll();
 }
 
 
@@ -63,7 +76,7 @@ void FindDialog::on_backCheckBox_toggled( bool checked )
 
 void FindDialog::on_findButton_clicked()
 {
-    QString text  = findEdit->text();
+    QString text  = findEdit->currentText();
     bool cs       = caseCheckBox->isChecked();
     bool words    = wordCheckBox->isChecked();
     bool absolute = startCheckBox->isChecked();
@@ -83,12 +96,41 @@ bool FindDialog::eventFilter( QObject *target, QEvent *event )
 {
     bool ok = QDialog::eventFilter( target, event );
 
-    if (( target == findEdit ) && ( event->type() == QEvent::MouseButtonPress )) {
-        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
-        QLineEdit *lineEdit = static_cast<QLineEdit *>(target);
-        mouseAction( mouseEvent, lineEdit );
+    if ( target == findEdit->lineEdit() ) {
+        // Support clipboard mouse actions in the entryfield
+        if ( event->type() == QEvent::MouseButtonPress ) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            mouseAction( mouseEvent, findEdit->lineEdit() );
+        }
+    }
+    else if ( target == findEdit ) {
+        // Prevent QComboBox from intercepting Enter, let the dialog handle it
+        if ( event->type() == QEvent::KeyPress ) {
+            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+            int pressedKey = keyEvent->key();
+            if (( pressedKey == Qt::Key_Return ) || ( pressedKey == Qt::Key_Enter )) {
+                keyPressEvent( keyEvent );
+                ok = true;
+            }
+        }
     }
     return ok;
+}
+
+
+void FindDialog::setFindText( const QString &text )
+{
+    findEdit->lineEdit()->setText( text );
+    findEdit->lineEdit()->selectAll();
+}
+
+
+void FindDialog::populateHistory( const QStringList &findHistory )
+{
+    findEdit->clear();
+    findEdit->addItem("");
+    findEdit->addItems( findHistory );
+    findEdit->clearEditText();
 }
 
 

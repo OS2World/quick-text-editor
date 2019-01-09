@@ -30,8 +30,17 @@ ReplaceDialog::ReplaceDialog( QWidget *parent )
 {
     setupUi( this );
     connect( cancelButton, SIGNAL( clicked() ), this, SLOT( close() ));
+    findEdit->lineEdit()->installEventFilter( this );
     findEdit->installEventFilter( this );
+    replaceEdit->lineEdit()->installEventFilter( this );
     replaceEdit->installEventFilter( this );
+}
+
+
+void ReplaceDialog::show()
+{
+    findEdit->setFocus();
+    QDialog::show();
 }
 
 
@@ -41,10 +50,23 @@ void ReplaceDialog::doReplace()
 }
 
 
-void ReplaceDialog::on_findEdit_textChanged( const QString &text )
+void ReplaceDialog::on_findEdit_editTextChanged( const QString &text )
 {
+    findButton->setEnabled( !text.isEmpty() );
     replaceButton->setEnabled( !text.isEmpty() );
     replaceAllButton->setEnabled( !text.isEmpty() );
+}
+
+
+void ReplaceDialog::on_findEdit_currentIndexChanged( int index )
+{
+    findEdit->lineEdit()->selectAll();
+}
+
+
+void ReplaceDialog::on_replaceEdit_currentIndexChanged( int index )
+{
+    replaceEdit->lineEdit()->selectAll();
 }
 
 
@@ -61,10 +83,27 @@ void ReplaceDialog::on_backCheckBox_toggled( bool checked )
 }
 
 
+void ReplaceDialog::on_findButton_clicked()
+{
+    QString text  = findEdit->currentText();
+    bool cs       = caseCheckBox->isChecked();
+    bool words    = wordCheckBox->isChecked();
+    bool absolute = startCheckBox->isChecked();
+    if ( backCheckBox->isChecked() ) {
+        emit reCheckBox->isChecked() ? findPreviousRegExp( text, cs, absolute ) :
+                                       findPrevious( text, cs, words, absolute );
+    } else {
+        emit reCheckBox->isChecked() ? findNextRegExp( text, cs, absolute ) :
+                                       findNext( text, cs, words, absolute );
+    }
+    startCheckBox->setChecked( false );
+}
+
+
 void ReplaceDialog::on_replaceButton_clicked()
 {
-    QString text = findEdit->text();
-    QString replacement = replaceEdit->text();
+    QString text = findEdit->currentText();
+    QString replacement = replaceEdit->currentText();
     bool cs = caseCheckBox->isChecked();
     bool words = wordCheckBox->isChecked();
     bool absolute = startCheckBox->isChecked();
@@ -85,8 +124,8 @@ void ReplaceDialog::on_replaceButton_clicked()
 
 void ReplaceDialog::on_replaceAllButton_clicked()
 {
-    QString text = findEdit->text();
-    QString replacement = replaceEdit->text();
+    QString text = findEdit->currentText();
+    QString replacement = replaceEdit->currentText();
     bool cs = caseCheckBox->isChecked();
     bool words = wordCheckBox->isChecked();
     bool absolute = startCheckBox->isChecked();
@@ -103,14 +142,46 @@ bool ReplaceDialog::eventFilter( QObject *target, QEvent *event )
 {
     bool ok = QDialog::eventFilter( target, event );
 
-    if ((( target == findEdit ) || ( target == replaceEdit )) &&
-        ( event->type() == QEvent::MouseButtonPress ))
-    {
-        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
-        QLineEdit *lineEdit = static_cast<QLineEdit *>(target);
-        mouseAction( mouseEvent, lineEdit );
+    if (( target == findEdit->lineEdit() ) || ( target == replaceEdit->lineEdit() )) {
+        // Support clipboard mouse actions in the entryfield
+        if ( event->type() == QEvent::MouseButtonPress ) {
+            QLineEdit *lineEdit = static_cast<QLineEdit *>(target);
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            mouseAction( mouseEvent, lineEdit );
+        }
+    }
+    else if (( target == findEdit ) || ( target == replaceEdit )) {
+        // Prevent QComboBox from intercepting Enter, let the dialog handle it
+        if ( event->type() == QEvent::KeyPress ) {
+            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+            int pressedKey = keyEvent->key();
+            if (( pressedKey == Qt::Key_Return ) || ( pressedKey == Qt::Key_Enter )) {
+                keyPressEvent( keyEvent );
+                ok = true;
+            }
+        }
     }
     return ok;
 }
 
+
+void ReplaceDialog::setFindText( const QString &text )
+{
+    findEdit->lineEdit()->setText( text );
+    findEdit->lineEdit()->selectAll();
+}
+
+
+void ReplaceDialog::populateHistory( const QStringList &findHistory, const QStringList &replaceHistory )
+{
+    findEdit->clear();
+    findEdit->addItem("");
+    findEdit->addItems( findHistory );
+    findEdit->clearEditText();
+    replaceEdit->clear();
+    replaceEdit->addItem("");
+    if ( replaceHistory.count() > 0 )
+        replaceEdit->addItems( replaceHistory );
+    replaceEdit->clearEditText();
+}
 

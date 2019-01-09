@@ -34,9 +34,6 @@
          </property>
         </widget>
        </item>
-       <item row="0" column="1">
-        <widget class="QLineEdit" name="findEdit"/>
-       </item>
        <item row="2" column="0">
         <spacer name="spacer">
          <property name="orientation">
@@ -90,7 +87,7 @@
          <item row="2" column="1">
           <widget class="QCheckBox" name="verifyCheckBox">
            <property name="text">
-            <string>&amp;Confirm replacement</string>
+            <string>C&amp;onfirm replacement</string>
            </property>
            <property name="checked">
             <bool>true</bool>
@@ -122,23 +119,53 @@
          </property>
         </widget>
        </item>
+       <item row="0" column="1">
+        <widget class="QComboBox" name="findEdit">
+         <property name="editable">
+          <bool>true</bool>
+         </property>
+         <property name="insertPolicy">
+          <enum>QComboBox::NoInsert</enum>
+         </property>
+        </widget>
+       </item>
        <item row="1" column="1">
-        <widget class="QLineEdit" name="replaceEdit"/>
+        <widget class="QComboBox" name="replaceEdit">
+         <property name="editable">
+          <bool>true</bool>
+         </property>
+         <property name="insertPolicy">
+          <enum>QComboBox::NoInsert</enum>
+         </property>
+        </widget>
        </item>
       </layout>
      </item>
      <item>
       <layout class="QHBoxLayout" name="horizontalLayout">
        <item>
+        <widget class="QPushButton" name="findButton">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>Find</string>
+         </property>
+         <property name="default">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="replaceButton">
          <property name="enabled">
           <bool>false</bool>
          </property>
          <property name="text">
-          <string>Replace</string>
+          <string>Re&amp;place</string>
          </property>
          <property name="default">
-          <bool>true</bool>
+          <bool>false</bool>
          </property>
         </widget>
        </item>
@@ -161,7 +188,7 @@
        <item>
         <widget class="QPushButton" name="cancelButton">
          <property name="text">
-          <string>Cancel</string>
+          <string>Close</string>
          </property>
         </widget>
        </item>
@@ -193,6 +220,7 @@
   <tabstop>backCheckBox</tabstop>
   <tabstop>startCheckBox</tabstop>
   <tabstop>verifyCheckBox</tabstop>
+  <tabstop>findButton</tabstop>
   <tabstop>replaceButton</tabstop>
   <tabstop>replaceAllButton</tabstop>
   <tabstop>cancelButton</tabstop>

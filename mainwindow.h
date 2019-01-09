@@ -21,18 +21,40 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#define USE_IO_THREADS
+
+
 #include <QMainWindow>
 #include <QDateTime>
+#include <QProcess>
 #include "version.h"
+
 
 #define PROGRAM_VERSION     VER_FILEVERSION_STR
 #define SETTINGS_VENDOR     "ATutils"
-#define SETTINGS_APP        "QuickEditor"
+#define SETTINGS_APP        "QE"
 #define ENCODING_EA_NAME    ".CODEPAGE"
+
+// Constants for QtAssistant-based cross-platform help
+#define HELP_HTML_ROOT      "qthelp://altsan.qe/help/"
+#define HELP_HTML_GENERAL   "qe.1.html"
+#define HELP_HTML_LINE      "qe.5.html"
+#define HELP_HTML_FIND      "qe.6.html"
+#define HELP_HTML_REPLACE   "qe.7.html"
+#define HELP_HTML_KEYS      "qe.9.html"
+
+// Constants for OS/2 native help
+#define HELP_PANEL_GENERAL        1
+#define HELP_PANEL_LINE         110
+#define HELP_PANEL_FIND         120
+#define HELP_PANEL_REPLACE      130
+#define HELP_PANEL_KEYS         200
+
 
 #if 1
 #define DEFAULT_FILENAME_FILTERS                            \
-    "Text files (*.txt *.log readme*);;"                    \
+    "Text files (*.txt readme*);;"                          \
+    "Log files (*.log *.l? *.l? *.err);;"                   \
     "Command files (*.cmd *.bat *.rex *.orx *.sh *.vrx);;"  \
     "All files (*)"
 #else
@@ -43,12 +65,12 @@
     "C/C++ source code (*.c *.h *.cpp *.hpp *.cc);;"        \
     "Command files (*.cmd *.bat *.rex *.orx *.sh *.vrx);;"  \
     "Java source code (*.jav *.java);;"                     \
-    "Log files (*.log *.l1 *.l2 *.err);;"                   \
     "Pascal source code (*.pas);;"                          \
     "Python files (*.py);;"                                 \
     "WWW files (*.htm *.html *.css *.cgi *.js *.php);;"     \
     "All files (*)"
 #endif
+
 
 class QAction;
 class QActionGroup;
@@ -57,6 +79,9 @@ class QeTextEdit;
 class QTextCursor;
 class FindDialog;
 class ReplaceDialog;
+class QeOpenThread;
+class QeSaveThread;
+
 
 typedef struct _FindParams_t
 {
@@ -74,9 +99,13 @@ class MainWindow : public QMainWindow
 
 public:
     MainWindow();
+    ~MainWindow();
     bool loadFile( const QString &fileName, bool createIfNew );
+    bool mapNameToEncoding( QString &encoding );
+    void openAsEncoding( QString fileName, bool createIfNew, QString encoding );
     void showUsage();
     void setReadOnly( bool readonly );
+    void setTextEncoding( QString newEncoding );
 
 protected:
     void closeEvent( QCloseEvent *event );
@@ -93,6 +122,8 @@ private slots:
     void findAgain();
     void replace();
     void about();
+    void showGeneralHelp();
+    void showKeysHelp();
     void openRecentFile();
     void clearRecentFiles();
     bool toggleEditMode( bool ovr );
@@ -115,8 +146,16 @@ private slots:
     void replacePreviousRegExp( const QString &str, const QString &repl, bool cs, bool absolute, bool confirm );
     void replaceAll( const QString &str, const QString &repl, bool cs, bool words, bool absolute, bool confirm, bool backwards );
     void replaceAllRegExp( const QString &str, const QString &repl, bool cs, bool absolute, bool confirm, bool backwards );
+    void updateFindHistory( const QString &findString );
+    void updateReplaceHistory( const QString &replaceString );
     void goToLine();
     void setTextEncoding();
+    void readProgress( int percent );
+    void readDone();
+    void readCancel();
+    void saveProgress( int percent );
+    void saveDone( qint64 iSize );
+
 
 private:
     // Setup methods
@@ -125,6 +164,7 @@ private:
     void createMenus();
     void createContextMenu();
     void createStatusBar();
+    void createHelp();
     void readSettings();
     void writeSettings();
 
@@ -137,15 +177,16 @@ private:
     void updateRecentFileActions();
     QString strippedName( const QString &fullFileName );
     void showMessage( const QString &message );
-    void updateEncoding();
-    bool showFindResult( QTextCursor found );
+    bool showFindResult( QTextCursor found, const QString &str );
     bool replaceFindResult( QTextCursor found, const QString newText, bool confirm );
     QString getFileCodepage( const QString &fileName );
     void setFileCodepage( const QString &fileName, const QString &encodingName );
+    void updateEncoding();
+    void launchAssistant( const QString &panel );
 
     // GUI objects
-    QeTextEdit *editor;
-    FindDialog *findDialog;
+    QeTextEdit    *editor;
+    FindDialog    *findDialog;
     ReplaceDialog *replaceDialog;
 
     QLabel *editModeLabel;
@@ -274,9 +315,26 @@ private:
     QAction *autosaveAction;
 
     QMenu   *helpMenu;
+    QAction *helpGeneralAction;
+    QAction *helpKeysAction;
     QAction *aboutAction;
 
+
+    // Global preferences from options dialog (not yet implemented)
+
+    bool    useNativeFD;
+    bool    saveLastDir;
+    bool    warnUnmodified;
+    bool    warnFileChanged;
+    bool    detectUpdate;
+    bool    quickFindCS;
+    bool    quickFindWords;
+    int     ctrlSBehaviour;
+
+
     // Other class variables
+
+    enum { MaxRecentFinds = 10 };
 
     QStringList recentFiles;
     QString     currentFile;
@@ -287,6 +345,22 @@ private:
     bool        encodingChanged;
     int         lastGoTo;
     FindParams  lastFind;
+    QStringList recentFinds;
+    QStringList recentReplaces;
+
+
+#ifdef USE_IO_THREADS
+    QeOpenThread *openThread;
+    QeSaveThread *saveThread;
+    bool         isReadThreadActive;
+    bool         isSaveThreadActive;
+#endif
+
+    // Program help (platform specific implementation)
+    void *helpInstance;
+
+    // QtAssistant process
+    QProcess *helpProcess;
 
 };
 

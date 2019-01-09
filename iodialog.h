@@ -1,5 +1,5 @@
 /******************************************************************************
-** QE - finddialog.h
+** QE - iodialog.h
 **
 **  Copyright (C) 2018 Alexander Taylor
 **
@@ -18,40 +18,28 @@
 **
 ******************************************************************************/
 
-#ifndef FINDDIALOG_H
-#define FINDDIALOG_H
+#ifndef QE_IODIALOG_H
+#define QE_IODIALOG_H
 
 #include <QDialog>
-#include "ui_finddialog.h"
+#include <QLabel>
 
-class FindDialog : public QDialog, public Ui::FindDialog
+class IoDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    FindDialog( QWidget *parent = 0 );
-    void setFindText( const QString &findString );
-    void populateHistory( const QStringList &findHistory );
-    void doFind();
-
-public slots:
-    void show();
+    IoDialog( QString text, QWidget *parent = 0 );
 
 signals:
-    void findNext( const QString &str, bool cs, bool words, bool absolute );
-    void findNextRegExp( const QString &str, bool cs, bool absolute );
-    void findPrevious( const QString &str, bool cs, bool words, bool absolute );
-    void findPreviousRegExp( const QString &str, bool cs, bool absolute );
+    void abortOpen();
 
 private slots:
-    void on_findEdit_editTextChanged( const QString &text );
-    void on_findEdit_currentIndexChanged( int index );
-    void on_reCheckBox_toggled( bool checked );
-    void on_backCheckBox_toggled( bool checked );
-    void on_findButton_clicked();
+    void cancelClicked();
 
 private:
-    bool eventFilter( QObject *target, QEvent *event );
+    QLabel      *label;
+    QPushButton *cancelButton;
 
 };
 

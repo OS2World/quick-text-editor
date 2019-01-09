@@ -19,10 +19,16 @@
 *******************************************************************************/
 
 #define INCL_WIN
+#define INCL_WINHELP
 #include <os2.h>
 
 #include <QMessageBox>
 #include "os2native.h"
+
+
+// ===========================================================================
+// OS/2 Native File Dialog Logic
+//
 
 #define DID_NEWTYPE_CB  290
 
@@ -39,6 +45,9 @@ typedef struct _FdData
 } FDDATA, *PFDDATA;
 
 
+// ---------------------------------------------------------------------------
+// Dialog procedure for the subclassed OS/2 file dialog.
+//
 MRESULT EXPENTRY EnhancedFileDlgProc( HWND hwndDlg, ULONG msg, MPARAM mp1, MPARAM mp2 )
 {
     MRESULT  mr;
@@ -102,6 +111,13 @@ MRESULT EXPENTRY EnhancedFileDlgProc( HWND hwndDlg, ULONG msg, MPARAM mp1, MPARA
 //
 
 
+// ---------------------------------------------------------------------------
+// Enhances the standard PM file dialog with a tweaked layout and custom
+// dialog procedure.  Basically this adds a file-type filter drop-down in
+// place of the rather useless .TYPE extended attribute drop-down, and
+// populates it with the specified list of filters.  This, too, is largely
+// inspired by the Mozilla/2 code, although the implementation is original.
+//
 void EnhanceFileDialog( PFILEDLG pfd, QString filter, QString *selectedFilter )
 {
     PFDDATA pfdextra;
@@ -146,6 +162,7 @@ void EnhanceFileDialog( PFILEDLG pfd, QString filter, QString *selectedFilter )
 }
 
 
+// ---------------------------------------------------------------------------
 void UpdateSelectedFilter( PFILEDLG pfd, QString *selectedFilter )
 {
     if ( !selectedFilter || !pfd->ulUser ) return;
@@ -154,6 +171,7 @@ void UpdateSelectedFilter( PFILEDLG pfd, QString *selectedFilter )
 }
 
 
+// ---------------------------------------------------------------------------
 void FreeFileDialogData( PFILEDLG pfd )
 {
     LONG i;
@@ -177,6 +195,12 @@ void FreeFileDialogData( PFILEDLG pfd )
 }
 
 
+// ---------------------------------------------------------------------------
+// OS2Native::getOpenFileName
+//
+// Implements OS/2 native File Open dialog (single selection).  Input/output
+// are the same as the standard Qt4 getOpenFileName function.
+//
 QString OS2Native::getOpenFileName(       QWidget *parent,
                                     const QString &caption,
                                     const QString &dir,
@@ -219,6 +243,12 @@ QString OS2Native::getOpenFileName(       QWidget *parent,
 }
 
 
+// ---------------------------------------------------------------------------
+// OS2Native::getOpenFileNames
+//
+// Implements OS/2 native File Open dialog (multiple selection).  Input/output
+// are the same as the standard Qt4 getOpenFileNames function.
+//
 QStringList	OS2Native::getOpenFileNames(       QWidget *parent,
                                          const QString &caption,
                                          const QString &dir,
@@ -260,6 +290,12 @@ QStringList	OS2Native::getOpenFileNames(       QWidget *parent,
 }
 
 
+// ---------------------------------------------------------------------------
+// OS2Native::getSaveFileName
+//
+// Implements OS/2 native File Save dialog.  Input/output are the same as the
+// standard Qt4 getSaveFileName function.
+//
 QString OS2Native::getSaveFileName(       QWidget *parent,
                                     const QString &caption,
                                     const QString &dir,
@@ -298,4 +334,112 @@ QString OS2Native::getSaveFileName(       QWidget *parent,
 }
 
 
+
+// ===========================================================================
+// OS/2 Native Help Logic
+//
+
+
+// ---------------------------------------------------------------------------
+// OS2Native::setNativeHelp
+//
+// Enables OS/2 native (compiled IPF) help for an application window.  This
+// function initializes the OS/2 Help Manager and associates the specified help
+// library (i.e. .hlp file) with the specified window.  (The application should
+// call OS2Native::destroyNativeHelp on shutdown/cleanup.)
+//
+// PARAMETERS:
+//     QWidget *parent      : The application window to be help-enabled
+//     QString &help_library: Filename of the help library (*.hlp)
+//     QString &help_title  : Title to be displayed on the help window
+//
+// RETURNS: void *
+//     Help instance handle which can be passed to other functions.
+//
+void *OS2Native::setNativeHelp(       QWidget *parent,
+                                const QString &help_library,
+                                const QString &help_title    )
+{
+    HAB      hab;
+    HWND     hwndFrame,
+             hwndHelp;
+    HELPINIT hinit;
+
+    if ( !parent ) return NULL;
+
+    hwndFrame = parent->winId();
+    if ( !hwndFrame ) return NULL;
+    hab = WinQueryAnchorBlock( hwndFrame );
+    if ( !hab ) hab = 1;
+
+    memset( &hinit, 0, sizeof( HELPINIT ));
+    hinit.cb = sizeof( HELPINIT );
+    hinit.phtHelpTable = NULL;
+    hinit.pszHelpWindowTitle = (PSZ)( help_title.toLocal8Bit().data() );
+    hinit.pszHelpLibraryName = (PSZ)( QDir::toNativeSeparators( help_library ).toLocal8Bit().data() );
+    hwndHelp = WinCreateHelpInstance( hab, &hinit );
+    if ( hwndHelp )
+        WinAssociateHelpInstance( hwndHelp, hwndFrame );
+
+    return (PVOID) hwndHelp;
+}
+
+
+// ---------------------------------------------------------------------------
+// OS2Native::destroyNativeHelp
+//
+// Destroys the specified OS/2 help instance. Should be called on application
+// shutdown (or when application help is otherwise no longer needed).
+//
+// PARAMETERS:
+//     void *help_instance: Help instance handle returned from setNativeHelp()
+//
+void OS2Native::destroyNativeHelp( void *help_instance )
+{
+    HWND hwndHelp = (HWND) help_instance;
+    if ( !hwndHelp ) return;
+
+    WinDestroyHelpInstance( hwndHelp );
+}
+
+
+// ---------------------------------------------------------------------------
+// OS2Native::showHelpPanel
+//
+// Opens the associated help file and displays the panel with the specified ID.
+//
+// PARAMETERS:
+//     void *help_instance: Help instance handle returned from setNativeHelp()
+//     unsigned short id  : Requested help panel ID to be displayed
+//
+void OS2Native::showHelpPanel( void *help_instance, unsigned short id )
+{
+    HWND hwndHelp = (HWND) help_instance;
+    if ( !hwndHelp ) return;
+
+    WinSendMsg( hwndHelp, HM_DISPLAY_HELP,
+                MPFROMSHORT( id ), MPFROMSHORT( HM_RESOURCEID ));
+}
+
+
+
+// ===========================================================================
+// Other Useful Functions
+//
+
+// ---------------------------------------------------------------------------
+// Get a widget's Presentation Manager window numeric identifier (resource ID).
+//
+unsigned short OS2Native::getWindowId( QWidget *window )
+{
+    HWND   hwnd;
+    USHORT usID;
+
+    if ( !window ) return 0;
+    hwnd = window->winId();
+    if ( !hwnd ) return 0;
+
+    usID = WinQueryWindowUShort( hwnd, QWS_ID );
+    return usID;
+}
 

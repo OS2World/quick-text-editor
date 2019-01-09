@@ -34,31 +34,35 @@ int main( int argc, char *argv[] )
     MainWindow *qe = new MainWindow;
     bool openReadOnly = false;
     bool showUsage    = false;
+    bool openEncoding = false;
+    QString encoding;
     QString fileName;
 
     for ( int a = 1; a < argc; a++ ) {
         char *psz = argv[ a ];
         if ( *psz == '/' || *psz == '-') {
-#if 0
-            psz++;
-            if ( !(*psz) ) continue;
-            if (( *psz == 'R') || ( *psz == 'r')) {
-                openReadOnly = true;
-            }
-            if (( *psz == 'H') || ( *psz == 'h') || ( *psz == '?')) {
-                showUsage = true;
-            }
-#else
             QString argStr( ++psz );
             if ( argStr.isEmpty() || argStr.isNull() )
                 continue;
             else if ( argStr.compare( QString("read"), Qt::CaseInsensitive ) == 0 )
                 openReadOnly = true;
+            else if ( argStr.compare( QString("xxxx"), Qt::CaseInsensitive ) == 0 )
+                openReadOnly = true;
+            else if ( argStr.startsWith( QString("cp:"), Qt::CaseInsensitive ) == 1 ) {
+                openEncoding = true;
+                encoding = argStr;
+                encoding.remove( 0, 3 );
+            }
+            else if ( argStr.startsWith( QString("enc:"), Qt::CaseInsensitive ) == 1 ) {
+                openEncoding = true;
+                encoding = argStr;
+                encoding.remove( 0, 4 );
+            }
             else if (( argStr.compare( QString("?")) == 0 ) ||
                      ( argStr.compare( QString("h"), Qt::CaseInsensitive ) == 0 ))
                 showUsage = true;
-#endif
         }
+        // Not a / switch, treat as a filename
         else if ( fileName.isNull() ) {
 #ifdef Q_OS_WIN32
             int t;
@@ -81,8 +85,15 @@ int main( int argc, char *argv[] )
         return 0;
     }
 
-    if ( !fileName.isNull() )
-        qe->loadFile( fileName, true );
+    if ( !fileName.isNull() ) {
+        if ( openEncoding )
+            qe->openAsEncoding( fileName, true, encoding );
+        else
+            qe->loadFile( fileName, true );
+    }
+    else if ( openEncoding && qe->mapNameToEncoding( encoding )) {
+        qe->setTextEncoding( encoding );
+    }
 
     qe->setReadOnly( openReadOnly );
     qe->show();
