@@ -1,5 +1,7 @@
 :userdoc.
 
+.nameit symbol='argprefix' text='/'
+
 .*****************************************************************************
 :h1 x=left y=bottom width=100% height=100% res=001.QE text editor
 :p.QE has been designed as a simple and efficient text editor with modern
@@ -28,15 +30,15 @@ acronym for anything in particular (although if one is desired,
 :p.QE accepts the following command-line options when run.
 
 :dl tsize=16 break=fit.
-:dt./?
+:dt.&argprefix.?
 .br
-/h
+&argprefix.h
 :dd.Show usage information
-:dt./read
+:dt.&argprefix.read
 :dd.Start QE in read-only mode
-:dt./enc&colon.:hp1.encoding:ehp1.
+:dt.&argprefix.enc&colon.:hp1.encoding:ehp1.
 .br
-/cp&colon.:hp1.encoding:ehp1.
+&argprefix.cp&colon.:hp1.encoding:ehp1.
 :dd.Select the specified :link reftype=fn refid=codepages.encoding:elink.
 :edl.
 
@@ -95,17 +97,18 @@ encodings are supported&colon.
  1275    Apple Roman
  1363    cp949
  1381    GB2312
- 1386    GB18030-0
+ 1386    GBK
  4992    ISO-2022-JP
+ 54936   GB18030
 :exmp.
-:p.Note that if the encoding name contains spaces, you will need to wrap it
+:p.Note that if the encoding name contains spaces, you may need to wrap it
 in double quotes (unless you are using a shell which supports other
 workarounds such as escape sequences).  On OS/2, for example, to specify
 Apple Roman on the command line, any of the following should work:
 :xmp.
-qe /enc&colon."Apple Roman"
-qe "/enc&colon.Apple Roman"
-qe /enc&colon.1275
+qe &argprefix.enc&colon."Apple Roman"
+qe "&argprefix.enc&colon.Apple Roman"
+qe &argprefix.enc&colon.1275
 :exmp.
 :efn.
 
@@ -516,7 +519,7 @@ the GNU Compiler Collection (GCC).
 :lm margin=4.
 :p.:hp2.QE Text Editor:ehp2.
 .br
-Copyright (C) 2018 Alexander Taylor
+Copyright (C) 2019 Alexander Taylor
 
 :p.Contains some code derived from examples in :hp1.C++ GUI Programming
 with Qt4 (Second Edition):ehp1. by Jasmin Blanchette &amp. Mark Summerfield.

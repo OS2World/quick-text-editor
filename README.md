@@ -59,8 +59,8 @@ Installation
   `qe.qch` and `qe.qhc` if you want online help support.
 
 
-Building
---------
+Building from Source
+--------------------
 
 GCC, GNU Make, and the Qt4 development libraries for your platform are 
 required.  As long as these are all installed correctly, building the
@@ -74,38 +74,39 @@ run `ipfc qe.ipf` from inside the `help` subdirectory.
 However, on Windows and Linux the help must be converted to QtAssistant
 format, which involves converting the IPF file to HTML and then running
 `qcollectiongenerator`.  The script `makehtml.cmd` performs the first part of
-this task; it is written in REXX and only tested under OS/2 (although it may
-work with Open Object REXX on other platforms).  All this script really does
-is run `qe.ipf` through the SED script `ipfhtml.sed`, split the resulting
-output into single-section HTML files, and ensure that any IPF links are
-converted to the proper URIs.  Once this is done, you will have a series of
-`qe.*.html` files; running `qcollectiongenerator qe.qhcp -o qe.qhc` should
-then generate the final QtAssistant help files.
+this task; it is written in REXX and has been confirmed to work with classic
+REXX under OS/2, and Regina REXX under Windows.  It also requires the SED 
+utility (GNU sed or the equivalent) to run.  This script runs `qe.ipf` 
+through the SED script `ipfhtml.sed`, splits the resulting output into 
+single-section HTML files, and ensures that any IPF links are converted to 
+the proper URIs.  Once this is done, you will have a series of `qe.*.html` 
+files; running `qcollectiongenerator qe.qhcp -o qe.qhc` should then generate 
+the final QtAssistant help files.
 
 
 Notices
 -------
 
-  QE Text Editor
-  Copyright (C) 2018 Alexander Taylor
+QE Text Editor  
+Copyright (C) 2018-2019 Alexander Taylor
 
-  Some code snippets are derived from examples in "C++ GUI Programming
-  with Qt4" (Second Edition) by Jasmin Blanchette & Mark Summerfield.
+A few routines were derived from examples in "C++ GUI Programming with 
+Qt4" (Second Edition) by Jasmin Blanchette & Mark Summerfield.
 
-  OS/2 version includes the public domain "EAString" module by Roger Orr.
+OS/2 version includes the public domain "EAString" module by Roger Orr.
 
-  OS/2 native file dialog code is derived in part from the Mozilla for OS/2
-  project.
+OS/2 native file dialog code is derived in part from the Mozilla for OS/2
+project.
 
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
 
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
