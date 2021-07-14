@@ -1,7 +1,7 @@
 /******************************************************************************
 ** QE - mainwindow.cpp
 **
-**  Copyright (C) 2018-2019 Alexander Taylor
+**  Copyright (C) 2018-2021 Alexander Taylor
 **  Some parts based on sample code from Blanchette & Summerfield, "C++ GUI
 **  Programming with Qt4" (Second Edition), Pearson 2007.
 **
@@ -102,6 +102,7 @@ unsigned int Codepage_CCSIDs[] = {
     1090,  // "ISO 8859-14"
     1091,  // "ISO 8859-16"
     1092,  // "TSCII"
+    1111,  // "MEMDISK-JA"
     1168,  // "KOI8-U"
     1200,  // "UTF-16BE"
     1202,  // "UTF-16LE"
@@ -156,6 +157,7 @@ QString Codepage_Mappings[] = {
     "ISO 8859-14",
     "ISO 8859-16",
     "TSCII",
+    "MEMDISK-JA",
     "KOI8-U",
     "UTF-16BE",
     "UTF-16LE",
@@ -206,6 +208,7 @@ MainWindow::MainWindow()
     QeOS2Codec *codec922  = new QeOS2Codec( QeOS2Codec::IBM922 );
     QeOS2Codec *codec1125 = new QeOS2Codec( QeOS2Codec::IBM1125 );
     QeOS2Codec *codec1131 = new QeOS2Codec( QeOS2Codec::IBM1131 );
+    QeOS2Codec *codecmemj = new QeOS2Codec( QeOS2Codec::MEMJA );
 
     // Keep the compiler happy
     if ( codec437 ) {;}
@@ -224,6 +227,7 @@ MainWindow::MainWindow()
     if ( codec922 ) {;}
     if ( codec1125) {;}
     if ( codec1131) {;}
+    if ( codecmemj) {;}
 #endif
 
     setAttribute( Qt::WA_DeleteOnClose );
@@ -359,7 +363,7 @@ void MainWindow::dropEvent (QDropEvent *event )
 
 void MainWindow::newFile()
 {
-    if ( okToContinue() ) {
+    if ( okToContinue() && clearReadOnlyOnNew() ) {
         editor->clear();
         setCurrentFile("");
     }
@@ -595,7 +599,7 @@ void MainWindow::about()
     QMessageBox::about( this,
                         tr("Product Information"),
                         tr("<b>QE Text Editor</b><br>Version %1<hr>"
-                           "Copyright &copy;2019 Alexander Taylor"
+                           "Copyright &copy;2021 Alexander Taylor"
                            "<p>Licensed under the GNU General Public License "
                            "version 3.0&nbsp;<br>"
                            "<a href=\"https://www.gnu.org/licenses/gpl.html\">"
@@ -2103,6 +2107,21 @@ void MainWindow::writeSettings()
 }
 
 
+bool MainWindow::clearReadOnlyOnNew()
+{
+    if ( editor->isReadOnly() ) {
+        int r = QMessageBox::question( this,
+                    tr("Turn Off Read-Only?"),
+                    tr("Creating a new file will cause read-only mode to be turned off. Proceed?"),
+                    QMessageBox::Ok | QMessageBox::Cancel
+                );
+        if ( r != QMessageBox::Ok ) return false;
+        setReadOnly( false );
+    }
+    return true;
+}
+
+
 bool MainWindow::okToContinue()
 {
     if ( isWindowModified() ) {
@@ -2209,8 +2228,8 @@ bool MainWindow::saveFile( const QString &fileName )
             return false;
     }
 
-    QFile file( fileName );
-    bool bExists = ( file.exists() );
+    QFile *file = new QFile( fileName );
+    bool bExists = ( file->exists() );
 
     if ( bExists ) {
         QDateTime fileTime = QFileInfo( fileName ).lastModified();
@@ -2230,21 +2249,24 @@ bool MainWindow::saveFile( const QString &fileName )
         }
     }
 
-    // Opening in read/write mode seems to preserve EAs on existing files.
-    if ( !file.open( QIODevice::ReadWrite | QFile::Text )) {
+    // Always open in read/write mode, as it seems to preserve EAs on existing files.
+    if ( !file->open( QIODevice::ReadWrite | QFile::Text )) {
         QMessageBox::critical( this, tr("Error"), tr("Error writing file"));
         return false;
     }
-#ifdef USE_IO_THREADS
-    QTextStream out( &file );
+
+    QApplication::setOverrideCursor( Qt::WaitCursor );
+
+#ifndef USE_IO_THREADS
+    QTextStream out( file );
     out.setCodec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
     QString text = editor->toPlainText();
     out << text;
     out.flush();
     qint64 iSize = out.pos();
-    if ( iSize != -1 ) file.resize( iSize );
-    file.flush();
-    file.close();
+    if ( iSize != -1 ) file->resize( iSize );
+    file->flush();
+    file->close();
 
     showMessage( tr("Saved file: %1 (%2 bytes written)").arg( QDir::toNativeSeparators( fileName )).arg( iSize ));
     setCurrentFile( fileName );
@@ -2265,9 +2287,10 @@ bool MainWindow::saveFile( const QString &fileName )
     if ( !currentEncoding.isEmpty() ) {
         setFileCodepage( fileName, currentEncoding );
     }
-#else
+    QApplication::restoreOverrideCursor();
 
-    QApplication::setOverrideCursor( Qt::WaitCursor );
+#else       // USE_IO_THREADS
+
     menuBar()->setEnabled( false );
     editor->setEnabled( false );
 
@@ -2276,9 +2299,9 @@ bool MainWindow::saveFile( const QString &fileName )
         saveThread = new QeSaveThread();
     connect( saveThread, SIGNAL( updateProgress( int )), this, SLOT( saveProgress( int )));
     connect( saveThread, SIGNAL( saveComplete( qint64 )), this, SLOT( saveDone( qint64 )));
-    QTextCodec codec( QTextCodec::codecForName( currentEncoding.toLatin1().data() ));
-    saveThread->setFile( file, codec, fileName );
-    saveThread->fullText = editor->toPlainText();
+    QTextCodec *codec = QTextCodec::codecForName( currentEncoding.toLatin1().data() );
+    saveThread->setFile( file, codec, fileName, bExists );
+    saveThread->setText( editor->toPlainText() );
     saveThread->start();
     isSaveThreadActive = true;
 
@@ -2389,6 +2412,10 @@ void MainWindow::setReadOnly( bool readOnly )
                                         Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard :
                                         Qt::TextEditorInteraction
                                    );
+    // These might be out of sync if we got here from somewhere other than the action event
+    if ( readOnly != readOnlyAction->isChecked() )
+        readOnlyAction->setChecked( readOnly );
+
     updateModeLabel();
 }
 

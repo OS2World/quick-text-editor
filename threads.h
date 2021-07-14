@@ -29,6 +29,15 @@
 
 #define FILE_CHUNK_SIZE  0x100000
 
+#define EOL_LF      0
+#define EOL_CRLF    1
+
+#if defined( Q_OS_UNIX )
+#define PLATFORM_NEWLINE EOL_LF
+#else
+#define PLATFORM_NEWLINE EOL_CRLF
+#endif
+
 
 // ============================================================================
 // QeOpenThread
@@ -73,11 +82,11 @@ class QeSaveThread : public QThread
 
 public:
     QeSaveThread();
-    void    setFile( QFile *file, QTextCodec *codec, QString fileName );
+    void    setFile( QFile *file, QTextCodec *codec, QString fileName, bool bExisting );
+    void    setText( const QString &text );
     void    cancel();
 
     QString outputFileName;
-    QString fullText;
 
 signals:
     void updateProgress( int percentage );
@@ -88,10 +97,12 @@ protected:
 
 private:
     void        setProgress( qint64 progress, qint64 total );
+    QString     fullText;
     QFile      *outputFile;
     QTextCodec *outputEncoding;
 
     bool        stop;
+    bool        bExists;
 };
 
 

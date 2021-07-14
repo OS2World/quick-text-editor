@@ -1,6 +1,7 @@
 #include "threads.h"
 #include "eastring.h"
 
+
 // ============================================================================
 // QeOpenThread
 //
@@ -101,6 +102,7 @@ QeSaveThread::QeSaveThread()
     outputFile     = NULL;
     outputEncoding = NULL;
     outputFileName = "";
+    bExists        = FALSE;
 }
 
 
@@ -108,10 +110,16 @@ QeSaveThread::QeSaveThread()
 void QeSaveThread::run()
 {
     stop = false;
-
     if ( outputFile != NULL ) {
-        bool bExists = ( outputFile->exists() );
         QTextStream out( outputFile );
+
+        /* TODO
+        if platform_newline == DOS and requested_newline == UNIX:
+            fulltext.replace("\r\n", "\n");
+        else if platform_newline == UNIX and requested_newline == DOS:
+            fulltext.replace("\n", "\r\n");
+        */
+
         qint64 total = fullText.size();
         qint64 written = 0;
         if ( outputEncoding != NULL )
@@ -132,14 +140,17 @@ void QeSaveThread::run()
             out.flush();
             written = out.pos();
         }
+
         // In case an existing file is being shrunk, make sure it's resized to the new contents
         if ( written != -1 ) outputFile->resize( written );
 
         outputFile->flush();
         outputFile->close();
+        delete outputFile;
 
         if ( !bExists ) {
 #ifdef __OS2__
+printf("Clearing default EAs\n");
             // If this is a new file, get rid of the useless default EAs added by klibc
             EASetString( (PSZ) outputFileName.toLocal8Bit().data(), (PSZ) "UID",   (PSZ) "");
             EASetString( (PSZ) outputFileName.toLocal8Bit().data(), (PSZ) "GID",   (PSZ) "");
@@ -157,11 +168,19 @@ void QeSaveThread::run()
 
 
 // ----------------------------------------------------------------------------
-void QeSaveThread::setFile( QFile *file, QTextCodec *codec, QString fileName )
+void QeSaveThread::setFile( QFile *file, QTextCodec *codec, QString fileName, bool bExisting )
 {
     outputFile     = file;
     outputEncoding = codec;
     outputFileName = fileName;
+    bExists        = bExisting;
+}
+
+
+// ----------------------------------------------------------------------------
+void QeSaveThread::setText( const QString &text )
+{
+    fullText = text;
 }
 
 
